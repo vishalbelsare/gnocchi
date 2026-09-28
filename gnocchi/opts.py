@@ -12,9 +12,9 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 import copy
+import importlib.metadata
 import itertools
 import operator
-import pkg_resources
 import uuid
 
 from oslo_config import cfg
@@ -30,21 +30,6 @@ import gnocchi.storage.s3
 import gnocchi.storage.swift
 
 
-# NOTE(sileht): The oslo.config interpolation is buggy when the value
-# is None, this replaces it by the expected empty string.
-# Fix will perhaps be fixed by https://review.openstack.org/#/c/417496/
-# But it seems some projects are relaying on the bug...
-class CustomStrSubWrapper(cfg.ConfigOpts.StrSubWrapper):
-    def __getitem__(self, key):
-        value = super(CustomStrSubWrapper, self).__getitem__(key)
-        if value is None:
-            return ''
-        return value
-
-
-cfg.ConfigOpts.StrSubWrapper = CustomStrSubWrapper
-
-
 _STORAGE_OPTS = list(itertools.chain(gnocchi.storage.OPTS,
                                      gnocchi.storage.ceph.OPTS,
                                      gnocchi.storage.file.OPTS,
@@ -56,7 +41,6 @@ _STORAGE_OPTS = list(itertools.chain(gnocchi.storage.OPTS,
 _INCOMING_OPTS = copy.deepcopy(_STORAGE_OPTS)
 for opt in _INCOMING_OPTS:
     opt.default = '${storage.%s}' % opt.name
-
 
 API_OPTS = (
     cfg.HostAddressOpt('host',
@@ -137,12 +121,10 @@ def list_opts():
         ("indexer", gnocchi.indexer.OPTS),
         ("metricd", (
             cfg.IntOpt('workers', min=1,
-                       required=True,
                        help='Number of workers for Gnocchi metric daemons. '
                        'By default the available number of CPU is used.'),
             cfg.IntOpt('metric_processing_delay',
                        default=60,
-                       required=True,
                        deprecated_group='storage',
                        help="How many seconds to wait between "
                        "scheduling new metrics to process"),
@@ -155,14 +137,12 @@ def list_opts():
                        deprecated_group='storage',
                        default=120,
                        min=-1,
-                       required=True,
                        help="How many seconds to wait between "
                        "metric ingestion reporting. Set value to -1 to "
                        "disable reporting"),
             cfg.IntOpt('metric_cleanup_delay',
                        deprecated_group='storage',
                        default=300,
-                       required=True,
                        help="How many seconds to wait between "
                        "cleaning of expired data"),
             cfg.IntOpt('processing_replicas',
@@ -176,21 +156,38 @@ def list_opts():
                        default=10000,
                        min=1,
                        help="Number of metrics that should be deleted "
-                       "simultaneously by one janitor."),
+                            "simultaneously by one janitor."),
+            cfg.IntOpt('metric_inactive_after',
+                       default=0,
+                       help="Number of seconds to wait before we consider a "
+                            "metric inactive. An inactive metric is a metric "
+                            "that has not received new measurements for a "
+                            "given period. If all metrics of a resource are "
+                            "inactive, we mark the resource with the "
+                            "'ended_at' timestamp. The default is 0 (zero), "
+                            "which means that we never execute process."),
+            cfg.IntOpt('resource_cleanup_after',
+                       default=0,
+                       help="Number of seconds to wait before removing a resource that has been marked as expired "
+                            "with the 'ended_at' timestamp. When activated, this feature will remove resources that "
+                            "have been expired for the given timespan. Therefore, be aware that the data (aggregated "
+                            "and raw) will be removed completely from the storage backend together with the indexer "
+                            "metadata. The default is 0 (zero), which means that we never execute the cleanup. ")
         )),
         ("api", (
             cfg.StrOpt('paste_config',
                        default="api-paste.ini",
                        help='Path to API Paste configuration.'),
-            cfg.StrOpt('auth_mode',
-                       default="basic",
-                       choices=list(map(operator.attrgetter("name"),
-                                    pkg_resources.iter_entry_points(
-                                        "gnocchi.rest.auth_helper"))),
-                       help='Authentication mode to use.'),
+            cfg.StrOpt(
+                'auth_mode',
+                default="basic",
+                choices=list(map(
+                    operator.attrgetter("name"),
+                    importlib.metadata.entry_points(
+                        group='gnocchi.rest.auth_helper'))),
+                help='Authentication mode to use.'),
             cfg.IntOpt('max_limit',
                        default=1000,
-                       required=True,
                        help=('The maximum number of items returned in a '
                              'single response from a collection resource')),
             cfg.IntOpt('operation_timeout',
@@ -198,6 +195,9 @@ def list_opts():
                        default=10, min=0,
                        help='Number of seconds before timeout when attempting '
                             'to do some operations.'),
+            cfg.StrOpt('uwsgi_path',
+                       default=None,
+                       help="Custom UWSGI path to avoid auto discovery of packages.")
         ) + API_OPTS + gnocchi.rest.http_proxy_to_wsgi.OPTS,
         ),
         ("storage", _STORAGE_OPTS),

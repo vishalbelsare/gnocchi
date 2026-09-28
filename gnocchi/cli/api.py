@@ -14,14 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
-from distutils import spawn
 import math
 import os
+import shutil
 import sys
 
 import daiquiri
 from oslo_config import cfg
-from oslo_policy import opts as policy_opts
 
 from gnocchi import opts
 from gnocchi.rest import app
@@ -37,15 +36,8 @@ def prepare_service(conf=None):
         conf = cfg.ConfigOpts()
 
     opts.set_defaults()
-    policy_opts.set_defaults(conf)
+
     conf = service.prepare_service(conf=conf)
-    cfg_path = conf.oslo_policy.policy_file
-    if not os.path.isabs(cfg_path):
-        cfg_path = conf.find_file(cfg_path)
-    if cfg_path is None or not os.path.exists(cfg_path):
-        cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                   '..', 'rest', 'policy.yaml'))
-    conf.set_default('policy_file', cfg_path, group='oslo_policy')
     return conf
 
 
@@ -78,7 +70,7 @@ def api():
             "No need to pass `--' in gnocchi-api command line anymore, "
             "please remove")
 
-    uwsgi = spawn.find_executable("uwsgi")
+    uwsgi = conf.api.uwsgi_path or shutil.which("uwsgi")
     if not uwsgi:
         LOG.error("Unable to find `uwsgi'.\n"
                   "Be sure it is installed and in $PATH.")
@@ -90,7 +82,7 @@ def api():
     # to use --wsgi-manage-chunked-input
     # https://github.com/unbit/uwsgi/issues/1428
     args = [
-        "--if-not-plugin", "python", "--plugin", "python", "--endif",
+        "--if-not-plugin", "python", "--plugin", "python3", "--endif",
         "--%s" % conf.api.uwsgi_mode, "%s:%d" % (
             conf.host or conf.api.host,
             conf.port or conf.api.port),
@@ -106,8 +98,6 @@ def api():
         "--wsgi", "gnocchi.rest.wsgi",
         "--pyargv", " ".join(sys.argv[1:]),
     ]
-    if sys.version_info.major == 3:
-        args[3] = "python3"
 
     if conf.api.uwsgi_mode == "http":
         args.extend([
@@ -120,4 +110,10 @@ def api():
     if virtual_env is not None:
         args.extend(["-H", os.getenv("VIRTUAL_ENV", ".")])
 
+    LOG.debug("Starting gnocchi api server with [%s] and arguments [%s]",
+              uwsgi, args)
     return os.execl(uwsgi, uwsgi, *args)
+
+
+if __name__ == '__main__':
+    api()

@@ -21,7 +21,6 @@ import operator
 import fixtures
 import iso8601
 import numpy
-import six
 
 from gnocchi import carbonara
 from gnocchi.tests import base
@@ -317,7 +316,7 @@ class TestAggregatedTimeSerie(base.BaseTestCase):
         ts = carbonara.TimeSerie.from_data(
             [datetime64(2014, 1, 1, 12, 0, 0)], [3])
         ts = self._resample(ts, numpy.timedelta64(60, 's'), 'std')
-        self.assertEqual(0, len(ts), ts.values)
+        self.assertEqual(0, len(ts), str(ts.values))
 
         ts = carbonara.TimeSerie.from_data(
             [datetime64(2014, 1, 1, 12, 0, 0),
@@ -632,7 +631,7 @@ class TestAggregatedTimeSerie(base.BaseTestCase):
         ts = {'sampling': numpy.timedelta64(60, 's'), 'agg': 'mean'}
         tsb = carbonara.BoundTimeSerie()
 
-        for i in six.moves.range(1, 11):
+        for i in range(1, 11):
             tsb.set_values(numpy.array([
                 (datetime64(2014, 1, 1, 12, i, i), float(i))],
                 dtype=carbonara.TIMESERIES_ARRAY_DTYPE),
@@ -853,8 +852,8 @@ class TestAggregatedTimeSerie(base.BaseTestCase):
         points = 100000
         ts = carbonara.TimeSerie.from_data(
             timestamps=list(map(datetime.datetime.utcfromtimestamp,
-                                six.moves.range(points))),
-            values=list(six.moves.range(points)))
+                                range(points))),
+            values=list(range(points)))
         agg = self._resample(ts, sampling, 'mean')
 
         grouped_points = list(agg.split())
@@ -876,8 +875,8 @@ class TestAggregatedTimeSerie(base.BaseTestCase):
         points = 100000
         ts = carbonara.TimeSerie.from_data(
             timestamps=list(map(datetime.datetime.utcfromtimestamp,
-                                six.moves.range(points))),
-            values=list(six.moves.range(points)))
+                                range(points))),
+            values=list(range(points)))
         agg = self._resample(ts, sampling, 'mean')
 
         split = [t[1] for t in list(agg.split())]

@@ -15,9 +15,9 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 import collections
+import daiquiri
 
 from oslo_config import cfg
-import six
 
 from gnocchi import carbonara
 from gnocchi.common import ceph
@@ -42,6 +42,11 @@ OPTS = [
 ]
 
 rados = ceph.rados
+
+LOG = daiquiri.getLogger(__name__)
+
+DEFAULT_RADOS_BUFFER_SIZE = 8192
+MAP_UNAGGREGATED_METRIC_NAME_BY_SIZE = {}
 
 
 class CephStorage(storage.StorageDriver):
@@ -84,11 +89,18 @@ class CephStorage(storage.StorageDriver):
     def _store_metric_splits(self, metrics_keys_aggregations_data_offset,
                              version=3):
         with rados.WriteOpCtx() as op:
-            for metric, keys_aggregations_data_offset in six.iteritems(
-                    metrics_keys_aggregations_data_offset):
+            for metric, keys_aggregations_data_offset in (
+                    metrics_keys_aggregations_data_offset.items()):
                 for key, agg, data, offset in keys_aggregations_data_offset:
                     name = self._get_object_name(
                         metric, key, agg.method, version)
+                    metric_size = len(data)
+
+                    if metric_size > DEFAULT_RADOS_BUFFER_SIZE:
+                        MAP_UNAGGREGATED_METRIC_NAME_BY_SIZE[name] = metric_size
+                        LOG.debug(
+                            "Storing time series size [%s] for metric [%s].",
+                            metric_size, name)
                     if offset is None:
                         self.ioctx.write_full(name, data)
                     else:
@@ -99,8 +111,8 @@ class CephStorage(storage.StorageDriver):
 
     def _delete_metric_splits(self, metrics_keys_aggregations, version=3):
         with rados.WriteOpCtx() as op:
-            for metric, keys_and_aggregations in six.iteritems(
-                    metrics_keys_aggregations):
+            for metric, keys_and_aggregations in (
+                    metrics_keys_aggregations.items()):
                 names = tuple(
                     self._get_object_name(
                         metric, key, aggregation.method, version)
@@ -154,7 +166,14 @@ class CephStorage(storage.StorageDriver):
         try:
             name = self._get_object_name(
                 metric, key, aggregation.method, version)
-            return self._get_object_content(name)
+
+            metric_size = MAP_UNAGGREGATED_METRIC_NAME_BY_SIZE.get(
+                name, DEFAULT_RADOS_BUFFER_SIZE)
+
+            LOG.debug("Reading metric [%s] with buffer size of [%s].",
+                      name, metric_size)
+
+            return self._get_object_content(name, buffer_size=metric_size)
         except rados.ObjectNotFound:
             return
 
@@ -189,7 +208,7 @@ class CephStorage(storage.StorageDriver):
             k_methods = zipped[3]
             k_granularities = list(map(utils.to_timespan, zipped[4]))
 
-            for timestamp, method, granularity in six.moves.zip(
+            for timestamp, method, granularity in zip(
                     k_timestamps, k_methods, k_granularities):
                 for aggregation in aggregations:
                     if (aggregation.method == method
@@ -207,9 +226,16 @@ class CephStorage(storage.StorageDriver):
 
     def _get_or_create_unaggregated_timeseries_unbatched(
             self, metric, version=3):
+        metric_name = self._build_unaggregated_timeserie_path(metric, version)
+        metric_size = MAP_UNAGGREGATED_METRIC_NAME_BY_SIZE.get(
+            metric_name, DEFAULT_RADOS_BUFFER_SIZE)
+
+        LOG.debug("Reading unaggregated metric [%s] with buffer size of [%s].",
+                  metric_name, metric_size)
+
         try:
             contents = self._get_object_content(
-                self._build_unaggregated_timeserie_path(metric, version))
+                metric_name, buffer_size=metric_size)
         except rados.ObjectNotFound:
             self._create_metric(metric)
         else:
@@ -219,14 +245,23 @@ class CephStorage(storage.StorageDriver):
 
     def _store_unaggregated_timeseries_unbatched(
             self, metric, data, version=3):
-        self.ioctx.write_full(
-            self._build_unaggregated_timeserie_path(metric, version), data)
 
-    def _get_object_content(self, name):
+        metric_name = self._build_unaggregated_timeserie_path(metric, version)
+        metric_size = len(data)
+
+        if metric_size > DEFAULT_RADOS_BUFFER_SIZE:
+            MAP_UNAGGREGATED_METRIC_NAME_BY_SIZE[metric_name] = metric_size
+            LOG.debug(
+                "Storing unaggregated time series size [%s] for metric [%s]",
+                metric_size, metric_name)
+        self.ioctx.write_full(metric_name, data)
+
+    def _get_object_content(self, name, buffer_size=DEFAULT_RADOS_BUFFER_SIZE):
         offset = 0
         content = b''
+
         while True:
-            data = self.ioctx.read(name, offset=offset)
+            data = self.ioctx.read(name, length=buffer_size, offset=offset)
             if not data:
                 break
             content += data

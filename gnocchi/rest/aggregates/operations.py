@@ -48,6 +48,11 @@ def rated_agg(agg):
 for agg in list(AGG_MAP):
     AGG_MAP["rate:%s" % agg] = rated_agg(agg)
 
+# these operations here are defined in
+# 'gnocchi.carbonara.GroupedTimeSeries' as class methods.
+RESAMPLE_AVAILABLE_AGG_MAP = [k for k in AGG_MAP.keys() if k != 'var'] + [
+    'last', 'first'] + [str(i + 1) + 'pct' for i in range(99)]
+
 
 # TODO(sileht): expose all operators in capability API
 binary_operators = {
@@ -97,6 +102,7 @@ binary_operators = {
     u"clip_min": lambda array, value: numpy.clip(array, value, None),
     u"clip_max": lambda array, value: numpy.clip(array, None, value),
 
+    u'max': numpy.fmax,
 }
 
 ternary_operators = {
@@ -119,8 +125,20 @@ unary_operators = {
 }
 
 
+def rateofchangesec(t, v):
+    """Calculate change of value per second."""
+    values = numpy.divide(
+        numpy.diff(v.T, prepend=numpy.nan),
+        numpy.divide(
+            numpy.diff(t, prepend=numpy.datetime64("NaT")),
+            numpy.timedelta64(1, 's'))
+    ).T
+    return t, values
+
+
 unary_operators_with_timestamps = {
-    u"rateofchange": lambda t, v: (t[1:], numpy.diff(v.T).T)
+    u"rateofchange": lambda t, v: (t[1:], numpy.diff(v.T).T),
+    u"rateofchangesec": rateofchangesec,
 }
 
 

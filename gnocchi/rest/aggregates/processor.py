@@ -19,7 +19,6 @@ import collections
 
 import daiquiri
 import numpy
-import six
 
 from gnocchi import carbonara
 from gnocchi.rest.aggregates import exceptions
@@ -58,7 +57,15 @@ def _get_measures_timeserie(storage, ref, granularity, *args, **kwargs):
         data = storage.get_aggregated_measures(
             {ref.metric: [agg]},
             *args, **kwargs)[ref.metric][agg]
+
+        LOG.debug("Measurement found [%s] for metric [%s] and granularity "
+                  "[%s] in storage [%s], and aggregation [%s].", data,
+                  ref.metric, granularity, storage, agg)
     except gnocchi_storage.MetricDoesNotExist:
+        LOG.debug("Measurement does not exist [%s] for granularity [%s] in "
+                  "storage [%s], and aggregation [%s].", ref.metric,
+                  granularity, storage, agg)
+
         data = carbonara.AggregatedTimeSerie(
             carbonara.Aggregation(ref.aggregation, granularity, None))
     return (ref, data)
@@ -88,8 +95,8 @@ def get_measures(storage, references, operations,
         # granularities_in_common
         granularities = [
             g
-            for g, occurrence in six.iteritems(
-                collections.Counter(all_granularities))
+            for g, occurrence in collections.Counter(
+                all_granularities).items()
             if occurrence == len(references)
         ]
 
@@ -140,6 +147,10 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
     references = collections.defaultdict(list)
     lookup_keys = collections.defaultdict(list)
     for (ref, timeserie) in refs_and_timeseries:
+        LOG.debug("Executing processing of timeseries [%s, split=%s] and"
+                  " references [%s].", timeserie, timeserie.get_split_key(),
+                  ref)
+
         from_ = (None if from_timestamp is None else
                  carbonara.round_timestamp(
                      from_timestamp, timeserie.aggregation.granularity))
@@ -152,20 +163,38 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
     is_aggregated = False
     result = {}
     for sampling in sorted(series, reverse=True):
+        LOG.debug("Processing sampling [%s].", sampling)
         # np.unique sorts results for us
         times, indices = numpy.unique(
             numpy.concatenate([i['timestamps'] for i in series[sampling]]),
             return_inverse=True)
 
         # create nd-array (unique series x unique times) and fill
-        filler = (numpy.NaN if fill in [None, 'null', 'dropna']
+        filler = (numpy.nan if fill in [None, 'null', 'dropna', 'ffill',
+                                        'bfill', 'full_ffill', 'full_bfill']
                   else fill)
-        val_grid = numpy.full((len(series[sampling]), len(times)), filler)
+        val_grid = numpy.full(
+            (len(series[sampling]), len(times)), filler)
         start = 0
         for i, split in enumerate(series[sampling]):
             size = len(split)
             val_grid[i][indices[start:start + size]] = split['values']
             start += size
+
+        if fill == "ffill":
+            val_grid = utils.forward_fill(val_grid)
+
+        if fill == "bfill":
+            val_grid = utils.backward_fill(val_grid)
+
+        if fill == "full_ffill":
+            val_grid = utils.forward_fill(val_grid)
+            val_grid = utils.backward_fill(val_grid)
+
+        if fill == "full_bfill":
+            val_grid = utils.backward_fill(val_grid)
+            val_grid = utils.forward_fill(val_grid)
+
         values = val_grid.T
 
         if fill is None:
@@ -200,8 +229,12 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
     if is_aggregated:
         output = {"aggregated": []}
         for sampling in sorted(result, reverse=True):
+            LOG.debug("Aggregated data found for time [%s], granularity [%s], "
+                      "references [%s], and values [%s] for sampling [%s].",
+                      times, granularity, references, values, sampling)
+
             granularity, times, values, references = result[sampling]
-            if fill == "dropna":
+            if fill in ("dropna", "ffill", "bfill", "full_ffill", "full_bfill"):
                 pos = ~numpy.logical_or(numpy.isnan(values[0]),
                                         numpy.isinf(values[0]))
                 v = values[0][pos]
@@ -210,7 +243,7 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
                 v = values[0]
                 t = times
             g = [granularity] * len(t)
-            output["aggregated"].extend(six.moves.zip(t, g, v))
+            output["aggregated"].extend(zip(t, g, v))
         return output
     else:
         r_output = collections.defaultdict(
@@ -221,7 +254,7 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
         for sampling in sorted(result, reverse=True):
             granularity, times, values, references = result[sampling]
             for i, ref in enumerate(references):
-                if fill == "dropna":
+                if fill in ("dropna", "ffill", "bfill", "full_ffill", "full_bfill"):
                     pos = ~numpy.logical_or(numpy.isnan(values[i]),
                                             numpy.isinf(values[i]))
                     v = values[i][pos]
@@ -230,7 +263,7 @@ def aggregated(refs_and_timeseries, operations, from_timestamp=None,
                     v = values[i]
                     t = times
                 g = [granularity] * len(t)
-                measures = six.moves.zip(t, g, v)
+                measures = zip(t, g, v)
                 if ref.resource is None:
                     m_output[ref.name][ref.aggregation].extend(measures)
                 else:

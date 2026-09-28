@@ -14,7 +14,7 @@ fi
 export GNOCCHI_DATA=$(mktemp -d -t gnocchi.XXXX)
 
 echo "* Installing Gnocchi from ${GNOCCHI_VERSION_FROM}"
-pip install -q --force-reinstall git+https://github.com/gnocchixyz/gnocchi.git@${GNOCCHI_VERSION_FROM}#egg=gnocchi[${GNOCCHI_VARIANT}]
+python -m pip install -q --force-reinstall "gnocchi[${GNOCCHI_VARIANT}] @ git+https://github.com/gnocchixyz/gnocchi.git@${GNOCCHI_VERSION_FROM}"
 
 RESOURCE_IDS=(
     "5a301761-aaaa-46e2-8900-8b4f6fe6675a"
@@ -61,8 +61,22 @@ inject_data() {
         echo -n '}'
     } | gnocchi measures batch-resources-metrics -
 
-    echo "* Waiting for measures computation"
-    while [ $(gnocchi status -f value -c "storage/total number of measures to process") -gt 0 ]; do sleep 1 ; done
+    timeout=300
+    echo "* Waiting for measures computation (for up to ${timeout} seconds)"
+    for i in $(seq 0 "${timeout}"); do
+        if [ "${i}" -ge "${timeout}" ]; then
+            echo "ERROR: Timed out while waiting for measures computation: ${num_measures} not processed" > /dev/stderr
+            exit 1
+        fi
+        num_measures=$(gnocchi status -f value -c "storage/total number of measures to process")
+        if [ "${num_measures}" -eq 0 ]; then
+            break
+        fi
+        if [ "${i}" -gt 0 ] && [ $(( "${i}" % 60 )) -eq 0 ]; then
+            echo "* Still waiting..."
+        fi
+        sleep 1
+    done
 }
 
 pifpaf_stop(){
@@ -79,12 +93,14 @@ trap cleanup EXIT
 
 
 if [ "$STORAGE_DAEMON" == "ceph" ]; then
+    echo "* Creating 'gnocchi' pool"
     ceph -c $STORAGE_CEPH_CONF osd pool create gnocchi 16 16 replicated
     STORAGE_URL=ceph://$STORAGE_CEPH_CONF
 else
     STORAGE_URL=file://$GNOCCHI_DATA
 fi
 
+echo "* Starting Gnocchi ${GNOCCHI_VERSION_FROM}"
 eval $(pifpaf run gnocchi --indexer-url $INDEXER_URL --storage-url $STORAGE_URL)
 export OS_AUTH_TYPE=gnocchi-basic
 export GNOCCHI_USER=$GNOCCHI_USER_ID
@@ -95,14 +111,36 @@ pifpaf_stop
 
 new_version=$(python setup.py --version)
 echo "* Upgrading Gnocchi from $GNOCCHI_VERSION_FROM to $new_version"
-pip install -v -U .[${GNOCCHI_VARIANT}]
+python -m pip install -v -U .[${GNOCCHI_VARIANT}]
 
-eval $(pifpaf run gnocchi --indexer-url $INDEXER_URL --storage-url $STORAGE_URL)
+eval $(pifpaf --verbose --debug run gnocchi --indexer-url $INDEXER_URL --storage-url $STORAGE_URL)
 # Gnocchi 3.1 uses basic auth by default
 export OS_AUTH_TYPE=gnocchi-basic
 export GNOCCHI_USER=$GNOCCHI_USER_ID
 
+# Pifpaf configures the logs for the standard output. Therefore, depending
+# on the operating system, the standard output has some buffer size, which
+# needs to be released. Otherwise, the logs stop to be writen, and the
+# execution of the code is "frozen", due to the lack of buffer in the
+# process output. To work around that, we can read the buffer, and dump it
+# into a log file. Then, we can cat the log file content at the end of the
+# process.
+UWSGI_LOG_FILE=/tmp/uwsgi-new-version.log
+METRICD_LOG_FILE=/tmp/gnocchi-metricd-new-version.log
+for PID in $(pidof uwsgi); do
+  echo "Configuring dump of uWSGI process [PID=${PID}] outputs to avoid freeze while processing because the logs are not read from buffer"
+  cat /proc/${PID}/fd/1 >> ${UWSGI_LOG_FILE} &
+  cat /proc/${PID}/fd/2 >> ${UWSGI_LOG_FILE} &
+done
+
+for PID in $(pidof gnocchi-metricd); do
+  echo "Configuring dump of MetricD process [PID=${PID}] outputs to avoid freeze while processing because the logs are not read from buffer"
+  cat /proc/${PID}/fd/1 >> ${METRICD_LOG_FILE} &
+  cat /proc/${PID}/fd/2 >> ${METRICD_LOG_FILE} &
+done
+
 # pifpaf creates a new statsd resource on each start
+echo "Executing the deletion of statsd resource [${GNOCCHI_STATSD_RESOURCE_ID}]."
 gnocchi resource delete $GNOCCHI_STATSD_RESOURCE_ID
 
 dump_data $GNOCCHI_DATA/new
@@ -115,3 +153,9 @@ for old in $GNOCCHI_DATA/old/*.json; do
     new=$GNOCCHI_DATA/new/$(basename $old)
     python -c "import json; old = json.load(open('$old')); new = json.load(open('$new')); assert all(i in old for i in new)"
 done
+
+echo "Dump uWSGI log file"
+cat ${UWSGI_LOG_FILE}
+
+echo "Dump MetricD log file"
+cat ${METRICD_LOG_FILE}

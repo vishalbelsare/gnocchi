@@ -21,15 +21,15 @@ import datetime
 from email import utils as email_utils
 import hashlib
 import json
+import unittest
+from unittest import mock
 import uuid
 
 import fixtures
 import iso8601
 from keystonemiddleware import fixture as ksm_fixture
-import six
 import testscenarios
-from testtools import testcase
-from unittest import mock
+import webob
 import webtest
 
 import gnocchi
@@ -96,7 +96,7 @@ class TestingApp(webtest.TestApp):
     @contextlib.contextmanager
     def use_another_user(self):
         if self.auth_mode != "keystone":
-            raise testcase.TestSkipped("Auth mode is not Keystone")
+            raise unittest.SkipTest("Auth mode is not Keystone")
         old_token = self.token
         self.token = self.VALID_TOKEN_2
         try:
@@ -107,7 +107,7 @@ class TestingApp(webtest.TestApp):
     @contextlib.contextmanager
     def use_invalid_token(self):
         if self.auth_mode != "keystone":
-            raise testcase.TestSkipped("Auth mode is not Keystone")
+            raise unittest.SkipTest("Auth mode is not Keystone")
         old_token = self.token
         self.token = self.INVALID_TOKEN
         try:
@@ -295,7 +295,7 @@ class ArchivePolicyTest(RestTest):
         # Transform list to set
         for ap in aps:
             ap['aggregation_methods'] = set(ap['aggregation_methods'])
-        for name, ap in six.iteritems(self.archive_policies):
+        for name, ap in self.archive_policies.items():
             apj = ap.jsonify()
             apj['definition'] = [
                 archive_policy.ArchivePolicyItem(**d).jsonify()
@@ -334,20 +334,75 @@ class MetricTest(RestTest):
             self.assertNotIn(metric_id, [m["id"] for m in metric_list.json])
 
     def test_list_metric_with_another_user_allowed(self):
-        rid = str(uuid.uuid4())
-        r = self.app.post_json("/v1/resource/generic",
-                               params={
-                                   "id": rid,
-                                   "project_id": TestingApp.PROJECT_ID_2,
-                                   "metrics": {
-                                       "disk": {"archive_policy_name": "low"},
-                                   }
-                               })
-        metric_id = r.json['metrics']['disk']
+        r1id = str(uuid.uuid4())
+        r1 = self.app.post_json("/v1/resource/generic",
+                                params={
+                                    "id": r1id,
+                                    "project_id": TestingApp.PROJECT_ID,
+                                    "metrics": {
+                                        "disk": {
+                                            "archive_policy_name": "low"},
+                                    }
+                                })
+        metric_id1 = r1.json['metrics']['disk']
+        r2id = str(uuid.uuid4())
+        r2 = self.app.post_json("/v1/resource/generic",
+                                params={
+                                    "id": r2id,
+                                    "project_id": TestingApp.PROJECT_ID_2,
+                                    "metrics": {
+                                        "disk": {
+                                            "archive_policy_name": "low"},
+                                    }
+                                })
+        metric_id2 = r2.json['metrics']['disk']
 
         with self.app.use_another_user():
-            metric_list = self.app.get("/v1/metric")
-            self.assertIn(metric_id, [m["id"] for m in metric_list.json])
+            metric_list = self.app.get("/v1/metric").json
+            metric_ids = [m["id"] for m in metric_list]
+            self.assertNotIn(metric_id1, metric_ids)
+            self.assertIn(metric_id2, metric_ids)
+
+    def test_list_metric_with_another_user_allowed_no_creator_policy(self):
+        r1id = str(uuid.uuid4())
+        r1 = self.app.post_json("/v1/resource/generic",
+                                params={
+                                    "id": r1id,
+                                    "project_id": TestingApp.PROJECT_ID,
+                                    "metrics": {
+                                        "disk": {
+                                            "archive_policy_name": "low"},
+                                    }
+                                })
+        metric_id1 = r1.json['metrics']['disk']
+        r2id = str(uuid.uuid4())
+        r2 = self.app.post_json("/v1/resource/generic",
+                                params={
+                                    "id": r2id,
+                                    "project_id": TestingApp.PROJECT_ID_2,
+                                    "metrics": {
+                                        "disk": {
+                                            "archive_policy_name": "low"},
+                                    }
+                                })
+        metric_id2 = r2.json['metrics']['disk']
+
+        orig_enforce = api.enforce
+
+        def _enforce(rule, target):
+            if rule == "list metric" and "created_by_project_id" in target:
+                raise webob.exc.HTTPForbidden()
+            return orig_enforce(rule, target)
+
+        with mock.patch.object(api,
+                               'enforce',
+                               side_effect=_enforce) as mock_enforce:
+            with self.app.use_another_user():
+                metric_list = self.app.get("/v1/metric").json
+                metric_ids = [m["id"] for m in metric_list]
+                self.assertNotIn(metric_id1, metric_ids)
+                self.assertIn(metric_id2, metric_ids)
+                mock_enforce.assert_called()
 
     def test_get_metric_with_another_user(self):
         result = self.app.post_json("/v1/metric",
@@ -660,6 +715,35 @@ class MetricTest(RestTest):
              metric2: []},
             result)
 
+    def test_metric_with_resource_id_from_other_user(self):
+        resource_id = str(uuid.uuid4())
+        self.app.post_json(
+            "/v1/resource/generic",
+            params={
+                "id": resource_id,
+                "user_id": TestingApp.USER_ID,
+                "project_id": TestingApp.PROJECT_ID,
+            },
+        )
+
+        with self.app.use_another_user():
+            self.app.get(
+                "/v1/resource/generic/%s" % resource_id,
+                status=404,
+            )
+
+        with self.app.use_another_user():
+            self.app.post_json(
+                "/v1/metric",
+                params={
+                    "archive_policy_name": "low",
+                    "resource_id": resource_id,
+                    "name": "cpu",
+                    "unit": "ns",
+                },
+                status=403,
+            )
+
 
 class ResourceTest(RestTest):
     def setUp(self):
@@ -950,7 +1034,7 @@ class ResourceTest(RestTest):
                          + self.resource_type
                          + "/"
                          + self.attributes['id'],
-                         status=403)
+                         status=404)
 
     def test_get_resource_named_metric(self):
         self.attributes['metrics'] = {'foo': {'archive_policy_name': "high"}}
@@ -971,7 +1055,7 @@ class ResourceTest(RestTest):
             self.app.get(
                 "/v1/resource/" + self.resource_type
                 + "/" + self.attributes['id'] + "/metric",
-                status=403)
+                status=404)
 
     def test_delete_resource_named_metric(self):
         self.attributes['metrics'] = {'foo': {'archive_policy_name': "high"}}
@@ -1144,7 +1228,7 @@ class ResourceTest(RestTest):
         result = json.loads(response.text)
         presult = json.loads(presponse.text)
         self.assertEqual(result, presult)
-        for k, v in six.iteritems(self.patchable_attributes):
+        for k, v in self.patchable_attributes.items():
             self.assertEqual(v, result[k])
         self.assertIsNone(result['revision_end'])
         self.assertEqual(result['revision_start'],
@@ -1162,7 +1246,7 @@ class ResourceTest(RestTest):
         self.assertEqual(result, history[1])
 
         h = history[0]
-        for k, v in six.iteritems(self.attributes):
+        for k, v in self.attributes.items():
             self.assertEqual(v, h[k])
         self.assertEqual(h['revision_end'],
                          "2014-01-02T06:48:00+00:00")
@@ -1262,7 +1346,7 @@ class ResourceTest(RestTest):
             "/v1/metric",
             params={'archive_policy_name': "high"})
         metric_id = json.loads(metric.text)['id']
-        metric_name = six.text_type(uuid.uuid4())
+        metric_name = str(uuid.uuid4())
         self.attributes['metrics'] = {metric_name: metric_id}
         self.app.get("/v1/metric/" + metric_id,
                      status=200)
@@ -1501,7 +1585,7 @@ class ResourceTest(RestTest):
         result = self.app.get("/v1/resource/generic?details=awesome",
                               status=400)
         self.assertIn(
-            b"Unable to parse `details': invalid truth value",
+            b"Unable to parse `details':",
             result.body)
 
     def _do_test_list_resources_with_detail(self, request):
@@ -1637,7 +1721,7 @@ class ResourceTest(RestTest):
             params={"=": {"name": name}},
             status=400,
             headers={"Accept": "application/json"})
-        self.assertEqual("Metrics can't being aggregated",
+        self.assertEqual("Metrics cannot be aggregated",
                          result.json['description']['cause'])
         self.assertEqual("No granularity match",
                          result.json['description']['reason'])
@@ -1883,8 +1967,60 @@ class GenericResourceTest(RestTest):
         result_description = result.json['description']
         self.assertEqual("Invalid input", result_description['cause'])
         self.assertIn(
-            "extra keys not allowed @ data[", result_description['reason']
+            "not a valid value @ data['wrongoperator']", result_description['reason']
         )
+
+
+class AggregatesTest(RestTest):
+    def test_get_metric_aggregates_with_another_user(self):
+        r = self.app.post_json(
+            "/v1/metric",
+            params={"archive_policy_name": "medium"},
+            status=201)
+        metric_id = r.json['id']
+        self.app.post_json(
+            f"/v1/metric/{metric_id}/measures",
+            params=[{"timestamp": "2013-01-01 12:00:01",
+                     "value": 8},
+                    {"timestamp": "2013-01-01 12:00:02",
+                     "value": 16}])
+        with self.app.use_another_user():
+            self.app.post_json(
+                "/v1/aggregates",
+                params={"operations": ["metric", metric_id, "mean"]},
+                status=403)
+
+    def test_get_metric_aggregates_with_another_user_allowed(self):
+        rid = str(uuid.uuid4())
+        r = self.app.post_json(
+            "/v1/resource/generic",
+            params={
+                "id": rid,
+                "project_id": TestingApp.PROJECT_ID_2,
+                "metrics": {
+                    "disk": {"archive_policy_name": "low"},
+                }
+            })
+        metric_id = r.json['metrics']['disk']
+        self.app.post_json(
+            f"/v1/metric/{metric_id}/measures",
+            params=[{"timestamp": "2013-01-01 12:00:01",
+                     "value": 8},
+                    {"timestamp": "2013-01-01 12:00:02",
+                     "value": 16}])
+        with self.app.use_another_user():
+            r = self.app.post_json(
+                "/v1/aggregates",
+                params={"operations": ["metric", metric_id, "mean"]},
+                status=200)
+            aggregates = r.json
+            self.assertIn(metric_id, aggregates["measures"])
+            measures = aggregates["measures"][metric_id]
+            self.assertIn("mean", measures)
+            self.assertEqual([["2013-01-01T00:00:00+00:00", 86400, 12],
+                              ["2013-01-01T12:00:00+00:00", 3600, 12],
+                              ["2013-01-01T12:00:00+00:00", 300, 12]],
+                             measures["mean"])
 
 
 class QueryStringSearchAttrFilterTest(tests_base.TestCase):

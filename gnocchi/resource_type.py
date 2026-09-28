@@ -14,7 +14,6 @@
 
 import numbers
 import re
-import six
 import stevedore
 import voluptuous
 
@@ -142,14 +141,14 @@ class StringSchema(CommonAttributeSchema):
 
     meta_schema_ext = {
         voluptuous.Required('min_length', default=0):
-        voluptuous.All(int, voluptuous.Range(min=0, max=255)),
-        voluptuous.Required('max_length', default=255):
-        voluptuous.All(int, voluptuous.Range(min=1, max=255))
+        voluptuous.All(int, voluptuous.Range(min=0, max=256)),
+        voluptuous.Required('max_length', default=256):
+        voluptuous.All(int, voluptuous.Range(min=1, max=256))
     }
 
     @property
     def schema_ext(self):
-        return voluptuous.All(six.text_type,
+        return voluptuous.All(str,
                               voluptuous.Length(
                                   min=self.min_length,
                                   max=self.max_length))
@@ -231,18 +230,18 @@ class ResourceTypeSchemaManager(stevedore.ExtensionManager):
         type_schemas = tuple([ext.plugin.meta_schema()
                               for ext in self.extensions])
         self._schema = voluptuous.Schema({
-            "name": six.text_type,
+            "name": str,
             voluptuous.Required("attributes", default={}): {
-                six.text_type: voluptuous.Any(*tuple(type_schemas))
+                str: voluptuous.Any(*tuple(type_schemas))
             }
         })
 
         type_schemas = tuple([ext.plugin.meta_schema(for_update=True)
                               for ext in self.extensions])
         self._schema_for_update = voluptuous.Schema({
-            "name": six.text_type,
+            "name": str,
             voluptuous.Required("attributes", default={}): {
-                six.text_type: voluptuous.Any(*tuple(type_schemas))
+                str: voluptuous.Any(*tuple(type_schemas))
             }
         })
 

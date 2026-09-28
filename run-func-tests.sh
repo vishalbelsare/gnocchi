@@ -18,10 +18,6 @@ check_empty_var() {
 GNOCCHI_TEST_STORAGE_DRIVERS=${GNOCCHI_TEST_STORAGE_DRIVERS:-file}
 GNOCCHI_TEST_INDEXER_DRIVERS=${GNOCCHI_TEST_INDEXER_DRIVERS:-postgresql}
 for storage in ${GNOCCHI_TEST_STORAGE_DRIVERS}; do
-    if [ "$storage" == "swift" ]; then
-        echo "WARNING: swift does not support python 3 skipping"
-        continue
-    fi
     for indexer in ${GNOCCHI_TEST_INDEXER_DRIVERS}; do
         unset STORAGE_URL
         unset INDEXER_URL
@@ -64,7 +60,7 @@ for storage in ${GNOCCHI_TEST_STORAGE_DRIVERS}; do
         export GNOCCHI_SERVICE_TOKEN="" # Just make gabbi happy
         export GNOCCHI_AUTHORIZATION="basic YWRtaW46" # admin in base64
         export GNOCCHI_TEST_PATH=gnocchi/tests/functional_live
-        pifpaf -e GNOCCHI run gnocchi --indexer-url $INDEXER_URL --storage-url $STORAGE_URL --coordination-driver redis -- ./tools/pretty_tox.sh $*
+        pifpaf -e GNOCCHI run gnocchi --indexer-url $INDEXER_URL --storage-url $STORAGE_URL --coordination-driver redis -- stestr run $*
 
         cleanup
     done

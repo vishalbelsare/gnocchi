@@ -14,12 +14,13 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
-from __future__ import absolute_import
 
+import datetime
 from oslo_db.sqlalchemy import models
-import six
 import sqlalchemy
 from sqlalchemy.ext import declarative
+from sqlalchemy.orm import declarative_base
+
 import sqlalchemy_utils
 
 from gnocchi import archive_policy
@@ -28,7 +29,7 @@ from gnocchi.indexer import sqlalchemy_types as types
 from gnocchi import resource_type
 from gnocchi import utils
 
-Base = declarative.declarative_base()
+Base = declarative_base()
 
 COMMON_TABLES_ARGS = {'mysql_charset': "utf8",
                       'mysql_engine': "InnoDB"}
@@ -100,12 +101,27 @@ class Metric(Base, GnocchiBase, indexer.Metric):
         sqlalchemy.ForeignKey('resource.id',
                               ondelete="SET NULL",
                               name="fk_metric_resource_id_resource_id"))
+    resource = sqlalchemy.orm.relationship("Resource",
+                                           back_populates="metrics")
     name = sqlalchemy.Column(sqlalchemy.String(255))
     unit = sqlalchemy.Column(sqlalchemy.String(31))
     status = sqlalchemy.Column(sqlalchemy.Enum('active', 'delete',
                                                name="metric_status_enum"),
                                nullable=False,
                                server_default='active')
+
+    needs_raw_data_truncation = sqlalchemy.Column(
+        "needs_raw_data_truncation", sqlalchemy.Boolean,
+        nullable=False, default=True,
+        server_default=sqlalchemy.sql.true())
+
+    # Timestamp that represents when the last measure push was received for the
+    # given metric. This allows us to identify when a metric ceased receiving
+    # measurements; thus, if all metric for a resource are in this situation,
+    # chances are that the resource ceased existing in the backend.
+    last_measure_timestamp = sqlalchemy.Column(
+        "last_measure_timestamp", sqlalchemy.DateTime, default=datetime.datetime.utcnow(), nullable=False,
+        server_default=sqlalchemy.sql.func.current_timestamp())
 
     def jsonify(self):
         d = {
@@ -202,11 +218,14 @@ class ResourceType(Base, GnocchiBase, resource_type.ResourceType):
 
 
 class ResourceJsonifier(indexer.Resource):
+    def __str__(self):
+        return str(self.jsonify())
+
     def jsonify(self, attrs=None):
         d = dict(self)
         del d['revision']
         if 'metrics' not in sqlalchemy.inspect(self).unloaded:
-            d['metrics'] = dict((m.name, six.text_type(m.id))
+            d['metrics'] = dict((m.name, str(m.id))
                                 for m in self.metrics)
 
         if self.creator is None:
@@ -247,12 +266,13 @@ class ResourceMixin(ResourceJsonifier):
     creator = sqlalchemy.Column(sqlalchemy.String(255))
     started_at = sqlalchemy.Column(types.TimestampUTC, nullable=False,
                                    default=lambda: utils.utcnow())
-    revision_start = sqlalchemy.Column(types.TimestampUTC, nullable=False,
+    revision_start = sqlalchemy.Column(types.TimestampUTC,
+                                       nullable=False,
                                        default=lambda: utils.utcnow())
     ended_at = sqlalchemy.Column(types.TimestampUTC)
     user_id = sqlalchemy.Column(sqlalchemy.String(255))
     project_id = sqlalchemy.Column(sqlalchemy.String(255))
-    original_resource_id = sqlalchemy.Column(sqlalchemy.String(255),
+    original_resource_id = sqlalchemy.Column(sqlalchemy.String(289),
                                              nullable=False)
 
 
@@ -264,7 +284,7 @@ class Resource(ResourceMixin, Base, GnocchiBase):
                            primary_key=True)
     revision_end = None
     metrics = sqlalchemy.orm.relationship(
-        Metric, backref="resource",
+        Metric, back_populates="resource",
         primaryjoin="and_(Resource.id == Metric.resource_id, "
         "Metric.status == 'active')")
 
@@ -289,10 +309,12 @@ class ResourceHistory(ResourceMixin, Base, GnocchiBase):
                                ondelete="CASCADE",
                                name="fk_rh_id_resource_id"),
                            nullable=False)
-    revision_end = sqlalchemy.Column(types.TimestampUTC, nullable=False,
+    revision_end = sqlalchemy.Column(types.TimestampUTC,
+                                     nullable=False,
                                      default=lambda: utils.utcnow())
     metrics = sqlalchemy.orm.relationship(
-        Metric, primaryjoin="Metric.resource_id == ResourceHistory.id",
+        Metric, overlaps="metrics,resource",
+        primaryjoin="Metric.resource_id == ResourceHistory.id",
         foreign_keys='Metric.resource_id')
 
 
@@ -355,7 +377,7 @@ class HistoryModelIterator(models.ModelIterator):
         # NOTE(sileht): Our custom resource attribute columns don't
         # have the same name in database than in sqlalchemy model
         # so remove the additional "f_" for the model name
-        n = six.advance_iterator(self.i)
+        n = next(self.i)
         model_attr = n[2:] if n[:2] == "f_" else n
         return model_attr, getattr(self.model, n)
 

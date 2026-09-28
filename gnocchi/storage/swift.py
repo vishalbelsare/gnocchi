@@ -17,7 +17,6 @@
 import collections
 
 from oslo_config import cfg
-import six
 
 from gnocchi import carbonara
 from gnocchi.common import swift
@@ -27,6 +26,7 @@ from gnocchi import utils
 swclient = swift.swclient
 swift_utils = swift.swift_utils
 
+
 OPTS = [
     cfg.StrOpt('swift_auth_version',
                default='1',
@@ -35,11 +35,14 @@ OPTS = [
                 default=False,
                 help='If True, swiftclient won\'t check for a valid SSL '
                      'certificate when authenticating.'),
+    # TODO(tkajinam): We can theoretically use URIOpt but it causes validation
+    # error for some reason.
     cfg.StrOpt('swift_url',
                help='Swift URL. '
                'If unset, it is obtained from the auth service.'),
-    cfg.StrOpt('swift_authurl',
+    cfg.URIOpt('swift_authurl',
                default="http://localhost:8080/auth/v1.0",
+               schemes=['http', 'https'],
                help='Swift auth URL.'),
     cfg.StrOpt('swift_preauthtoken',
                secret=True,
@@ -68,14 +71,29 @@ OPTS = [
     cfg.StrOpt('swift_container_prefix',
                default='gnocchi',
                help='Prefix to namespace metric containers.'),
+    cfg.BoolOpt('swift_container_prefix_all',
+                default=False,
+                help='Prefix not just metric containers, but all '
+                     'Swift containers created by Gnocchi for the '
+                     'namespace defined in swift_container_prefix. '
+                     'This allows multiple Gnocchi deployments using '
+                     'the Swift storage driver to share the same project. '
+                     'NOTE: This should be either enabled or disabled ONCE '
+                     'for NEW Gnocchi deployments. This cannot be changed '
+                     'for existing deployments.'),
+    cfg.StrOpt('swift_storage_policy',
+               default=None,
+               help='Storage policy to use when creating containers. '
+                    'When unset, the default Swift storage policy is used.'),
     cfg.StrOpt('swift_endpoint_type',
                default='publicURL',
+               choices=['publicURL', 'internalURL', 'adminURL'],
                help='Endpoint type to connect to Swift',),
     cfg.StrOpt('swift_service_type',
                default='object-store',
                help='A string giving the service type of the swift service '
                     'to use. This setting is only used if '
-                    'swift_auth_version is 2.'),
+                    'swift_auth_version is 2 or 3.'),
     cfg.IntOpt('swift_timeout',
                min=0,
                default=300,
@@ -94,6 +112,11 @@ class SwiftStorage(storage.StorageDriver):
         super(SwiftStorage, self).__init__(conf)
         self.swift = swift.get_connection(conf)
         self._container_prefix = conf.swift_container_prefix
+        self._put_container_headers = {}
+        if conf.swift_storage_policy:
+            self._put_container_headers["X-Storage-Policy"] = (
+                conf.swift_storage_policy
+            )
 
     def __str__(self):
         return "%s: %s" % (self.__class__.__name__, self._container_prefix)
@@ -113,6 +136,7 @@ class SwiftStorage(storage.StorageDriver):
         # TODO(jd) A container per user in their account?
         resp = {}
         self.swift.put_container(self._container_name(metric),
+                                 headers=self._put_container_headers,
                                  response_dict=resp)
         # put_container() should return 201 Created; if it returns 204, that
         # means the metric was already created!
@@ -184,7 +208,7 @@ class SwiftStorage(storage.StorageDriver):
         k_methods = zipped[1]
         k_granularities = list(map(utils.to_timespan, zipped[2]))
 
-        for timestamp, method, granularity in six.moves.zip(
+        for timestamp, method, granularity in zip(
                 k_timestamps, k_methods, k_granularities):
             for aggregation in aggregations:
                 if (aggregation.method == method

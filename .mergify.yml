@@ -1,85 +1,75 @@
 queue_rules:
   - name: default
-    conditions:
-    - check-success=doc (docs)
-    - check-success=doc (docs-gnocchi-web)
-    - check-success=check (pep8)
-    - check-success=test (py36, postgresql-file-upgrade-from-4.3)
-    - check-success=test (py36, mysql-file)
-    - check-success=test (py36, mysql-swift)
-    - check-success=test (py36, mysql-s3)
-    - check-success=test (py36, postgresql-file)
-    - check-success=test (py36, postgresql-swift)
-    - check-success=test (py36, postgresql-s3)
-    - check-success=test (py38, mysql-ceph-upgrade-from-4.3)
-    - check-success=test (py38, postgresql-file-upgrade-from-4.3)
-    - check-success=test (py38, mysql-file)
-    - check-success=test (py38, mysql-swift)
-    - check-success=test (py38, mysql-s3)
-    - check-success=test (py38, mysql-ceph)
-    - check-success=test (py38, postgresql-file)
-    - check-success=test (py38, postgresql-swift)
-    - check-success=test (py38, postgresql-s3)
-    - check-success=test (py38, postgresql-ceph)
+    queue_conditions:
+      - label != work-in-progress
+      - '#approved-reviews-by >= 1'
+      - check-success=doc (docs)
+      - check-success=doc (docs-gnocchi-web)
+      - check-success=check (build)
+      - check-success=check (pep8)
+      - check-success=test (py39, mysql-ceph-upgrade-from-4.6)
+      - check-success=test (py39, postgresql-file-upgrade-from-4.6)
+      - check-success=test (py39, mysql-file)
+      - check-success=test (py39, mysql-file-sqlalchemy14)
+      - check-success=test (py39, mysql-swift)
+      - check-success=test (py39, mysql-s3)
+      - check-success=test (py39, mysql-ceph)
+      - check-success=test (py39, postgresql-file)
+      - check-success=test (py39, postgresql-file-sqlalchemy14)
+      - check-success=test (py39, postgresql-swift)
+      - check-success=test (py39, postgresql-s3)
+      - check-success=test (py39, postgresql-ceph)
+      - check-success=test (py311, postgresql-file-upgrade-from-4.6)
+      - check-success=test (py311, mysql-file)
+      - check-success=test (py311, mysql-file-sqlalchemy14)
+      - check-success=test (py311, mysql-swift)
+      - check-success=test (py311, mysql-s3)
+      - check-success=test (py311, postgresql-file)
+      - check-success=test (py311, postgresql-file-sqlalchemy14)
+      - check-success=test (py311, postgresql-swift)
+      - check-success=test (py311, postgresql-s3)
+      - check-success=test (py312, mysql-ceph-upgrade-from-4.6)
+      - check-success=test (py312, postgresql-file-upgrade-from-4.6)
+      - check-success=test (py312, mysql-file)
+      - check-success=test (py312, mysql-file-sqlalchemy14)
+      - check-success=test (py312, mysql-swift)
+      - check-success=test (py312, mysql-s3)
+      - check-success=test (py312, mysql-ceph)
+      - check-success=test (py312, postgresql-file)
+      - check-success=test (py312, postgresql-file-sqlalchemy14)
+      - check-success=test (py312, postgresql-swift)
+      - check-success=test (py312, postgresql-s3)
+      - check-success=test (py312, postgresql-ceph)
+    merge_method: merge
 
 pull_request_rules:
-  - name: automatic merge
-    actions:
-      queue:
-        method: merge
-        name: default
-    conditions:
-    - label!=work-in-progress
-    - '#approved-reviews-by>=1'
-    - check-success=doc (docs)
-    - check-success=doc (docs-gnocchi-web)
-    - check-success=check (pep8)
-    - check-success=test (py36, postgresql-file-upgrade-from-4.3)
-    - check-success=test (py36, mysql-file)
-    - check-success=test (py36, mysql-swift)
-    - check-success=test (py36, mysql-s3)
-    - check-success=test (py36, postgresql-file)
-    - check-success=test (py36, postgresql-swift)
-    - check-success=test (py36, postgresql-s3)
-    - check-success=test (py38, mysql-ceph-upgrade-from-4.3)
-    - check-success=test (py38, postgresql-file-upgrade-from-4.3)
-    - check-success=test (py38, mysql-file)
-    - check-success=test (py38, mysql-swift)
-    - check-success=test (py38, mysql-s3)
-    - check-success=test (py38, mysql-ceph)
-    - check-success=test (py38, postgresql-file)
-    - check-success=test (py38, postgresql-swift)
-    - check-success=test (py38, postgresql-s3)
-    - check-success=test (py38, postgresql-ceph)
-
-  - name: automatic merge backports from Mergify
-    actions:
-      queue:
-        method: merge
-        name: default
-    conditions:
-    - base~=^stable/.*
-    - label!=work-in-progress
-    - author=mergify[bot]
-    - check-success=Travis CI - Pull Request
-
   - name: dismiss reviews on additional commit
     actions:
       dismiss_reviews: {}
     conditions: []
+  - actions:
+      backport:
+        branches:
+          - stable/4.5
+    conditions:
+      - label=backport-to-4.5
+    name: backport stable/4.5
 
-# Backports to stable branches
   - actions:
       backport:
         branches:
-        - stable/4.3
+          - stable/4.6
     conditions:
-    - label=backport-to-4.3
-    name: backport stable/4.3
+      - label=backport-to-4.6
+    name: backport stable/4.6
   - actions:
       backport:
         branches:
-        - stable/4.4
+          - stable/4.7
     conditions:
-    - label=backport-to-4.4
-    name: backport stable/4.4
+      - label=backport-to-4.7
+    name: backport stable/4.7
+  - name: automatic merge + automatic merge backports from Mergify
+    conditions: []
+    actions:
+      queue:

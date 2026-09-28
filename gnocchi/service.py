@@ -19,7 +19,7 @@ import logging
 import daiquiri
 from oslo_config import cfg
 from oslo_db import options as db_options
-from six.moves.urllib import parse as urlparse
+from urllib import parse as urlparse
 
 import gnocchi
 from gnocchi import archive_policy
@@ -77,6 +77,10 @@ def prepare_service(args=None, conf=None,
         else:
             logging_level = logging.WARNING
     logging.getLogger("gnocchi").setLevel(logging_level)
+
+    if not skip_log_opts:
+        LOG.debug("Preparing gnocchi service for configuration.")
+        conf.log_opt_values(LOG, logging.DEBUG)
 
     # HACK(jd) I'm not happy about that, fix AP class to handle a conf object?
     archive_policy.ArchivePolicy.DEFAULT_AGGREGATION_METHODS = (

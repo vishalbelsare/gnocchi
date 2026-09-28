@@ -12,16 +12,12 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import itertools
 import uuid
 
-try:
-    import asyncio
-except ImportError:
-    import trollius as asyncio
 import daiquiri
 from oslo_config import cfg
-import six
 
 from gnocchi import incoming
 from gnocchi import indexer
@@ -95,9 +91,9 @@ class Stats(object):
 
     def flush(self):
         for metric_name, measure in itertools.chain(
-                six.iteritems(self.gauges),
-                six.iteritems(self.counters),
-                six.iteritems(self.times)):
+                self.gauges.items(),
+                self.counters.items(),
+                self.times.items()):
             try:
                 # NOTE(jd) We avoid considering any concurrency here as statsd
                 # is not designed to run in parallel and we do not envision

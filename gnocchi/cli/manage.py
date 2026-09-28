@@ -20,7 +20,6 @@ import sys
 import daiquiri
 from oslo_config import cfg
 from oslo_config import generator
-import six
 
 from gnocchi import archive_policy
 from gnocchi import incoming
@@ -81,7 +80,7 @@ def upgrade():
             and not index.list_archive_policy_rules()):
         if conf.skip_index:
             index = indexer.get_driver(conf)
-        for name, ap in six.iteritems(archive_policy.DEFAULT_ARCHIVE_POLICIES):
+        for name, ap in archive_policy.DEFAULT_ARCHIVE_POLICIES.items():
             index.create_archive_policy(ap)
         index.create_archive_policy_rule("default", "*", "low")
 
@@ -106,3 +105,7 @@ def change_sack_size():
     s.remove_sacks()
     LOG.info("Creating new %d sacks", conf.sacks_number)
     s.upgrade(conf.sacks_number)
+
+
+if __name__ == '__main__':
+    upgrade()

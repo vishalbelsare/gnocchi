@@ -19,13 +19,13 @@ import logging
 import os
 import subprocess
 import threading
+import unittest
 import uuid
 
 import daiquiri
 import fixtures
 import numpy
-import six
-from six.moves.urllib.parse import unquote
+from urllib.parse import unquote
 try:
     from swiftclient import exceptions as swexc
 except ImportError:
@@ -59,33 +59,39 @@ def _skip_decorator(func):
         try:
             return func(*args, **kwargs)
         except exceptions.NotImplementedError as e:
-            raise testcase.TestSkipped(six.text_type(e))
+            raise unittest.SkipTest(str(e))
     return skip_if_not_implemented
 
 
 class FakeSwiftClient(object):
     def __init__(self, *args, **kwargs):
         self.kvs = {}
+        self.headers = {}
 
-    def put_container(self, container, response_dict=None):
+    def put_container(self, container, headers=None, response_dict=None):
         if response_dict is not None:
             if container in self.kvs:
                 response_dict['status'] = 204
             else:
                 response_dict['status'] = 201
         self.kvs[container] = {}
+        self.headers[container] = (
+            {header.lower(): value for header, value in headers.items()}
+            if headers
+            else {}
+        )
 
     def get_container(self, container, delimiter=None,
                       path=None, full_listing=False, limit=None):
         try:
-            container = self.kvs[container]
+            container_objs = self.kvs[container]
         except KeyError:
             raise swexc.ClientException("No such container",
                                         http_status=404)
 
         files = []
         directories = set()
-        for k, v in six.iteritems(container.copy()):
+        for k, v in container_objs.items():
             if path and not k.startswith(path):
                 continue
 
@@ -110,7 +116,8 @@ class FakeSwiftClient(object):
             # otherwise.
             end = 1
 
-        return ({'x-container-object-count': len(container.keys())},
+        return ({**self.headers[container],
+                 'x-container-object-count': len(container_objs.keys())},
                 (files + list(directories))[:end])
 
     def put_object(self, container, key, obj):
@@ -216,12 +223,12 @@ class CaptureOutput(fixtures.Fixture):
 class BaseTestCase(testcase.TestCase):
     def setUp(self):
         super(BaseTestCase, self).setUp()
+
         if not os.getenv("GNOCCHI_TEST_DEBUG"):
             self.useFixture(CaptureOutput())
 
 
-@six.add_metaclass(SkipNotImplementedMeta)
-class TestCase(BaseTestCase):
+class TestCase(BaseTestCase, metaclass=SkipNotImplementedMeta):
 
     REDIS_DB_INDEX = 0
     REDIS_DB_LOCK = threading.Lock()
@@ -302,7 +309,7 @@ class TestCase(BaseTestCase):
             self.index.upgrade()
 
         self.archive_policies = self.ARCHIVE_POLICIES.copy()
-        for name, ap in six.iteritems(self.archive_policies):
+        for name, ap in self.archive_policies.items():
             # Create basic archive policies
             try:
                 self.index.create_archive_policy(ap)

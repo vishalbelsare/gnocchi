@@ -35,7 +35,7 @@ When opening a pull-request, make sure that:
 
 All sent pull-requests are checked using GitHub Actions, which is in charge of
 running the tests suites. There are different scenarios being run: `PEP 8`_
-compliance tests, upgrade tests, unit and functional tests.
+compliance tests, doc8 lint, upgrade tests, unit and functional tests.
 
 All pull-requests must be reviewed by `members of the Gnocchi project`_.
 
@@ -65,19 +65,19 @@ a virtual environment for each test environment, so make sure you are using an
 up to date version of `virtualenv <https://pypi.python.org/pypi/virtualenv>`_.
 
 Different test environments and configurations can be found by running the
-``tox -l`` command. For example, to run tests with Python 3.8, PostgreSQL as
+``tox -l`` command. For example, to run tests with Python 3.9, PostgreSQL as
 indexer, and file as storage backend:
 
 ::
 
-    tox -e py38-postgresql-file
+    tox -e py39-postgresql-file
 
 
 To run tests with MySQL as indexer, and Ceph as storage backend:
 
 ::
 
-    tox -e py38-mysql-ceph
+    tox -e py39-mysql-ceph
 
 
 In order to run the tests like they do in the CI, you could create

@@ -16,25 +16,9 @@
 
 import setuptools
 
-import gnocchi.setuptools
-
-cmdclass = {
-    'egg_info': gnocchi.setuptools.local_egg_info,
-    'develop': gnocchi.setuptools.local_develop,
-    'install_scripts': gnocchi.setuptools.local_install_scripts,
-}
-
-try:
-    from sphinx import setup_command
-    cmdclass['build_sphinx'] = setup_command.BuildDoc
-except ImportError:
-    pass
-
+cmdclass = {}
 
 setuptools.setup(
-    setup_requires=['setuptools>=30.3.0',
-                    'setuptools_scm!=1.16.0,!=1.16.1,!=1.16.2'],
-    # Remove any local stuff to mimic pbr
-    use_scm_version={'local_scheme': lambda v: ""},
     cmdclass=cmdclass,
+    py_modules=[],
 )

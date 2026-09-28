@@ -645,7 +645,8 @@ tests:
         $.code: 400
         $.description.cause: "Invalid operations"
         $.description.reason: "/^Fail to parse the operations string/"
-        $.description.detail: /^Expected \'\)\', found end of text  \(at char 15\), \(line:1, col:16\)/
+        # TODO(tobias-urdin): Reenable this when https://github.com/pyparsing/pyparsing/issues/504 is fixed
+        #$.description.detail: /^Expected \'\)\', found end of text  \(at char 15\), \(line:1, col:16\)/
 
     - name: get invalid metric operations
       POST: /v1/aggregates
@@ -698,7 +699,7 @@ tests:
       status: 400
       response_json_paths:
         $.code: 400
-        $.description.cause: "Metrics can't being aggregated"
+        $.description.cause: "Metrics cannot be aggregated"
         $.description.reason: "No granularity match"
         $.description.detail.`len`: 3
 
@@ -716,7 +717,7 @@ tests:
       status: 400
       response_json_paths:
         $.code: 400
-        $.description.cause: "Metrics can't being aggregated"
+        $.description.cause: "Metrics cannot be aggregated"
         $.description.reason: "Granularities are missing"
         $.description.detail:
         - ["$HISTORY['create metric1'].$RESPONSE['$.id']", mean, 123]
@@ -802,7 +803,7 @@ tests:
         $.code: 400
         $.description.cause: "Argument value error"
         $.description.detail: "fill"
-        $.description.reason: "Must be a float, 'dropna' or 'null'"
+        $.description.reason: "Must be a float, 'dropna', 'null', 'ffill', 'bfill', 'full_ffill' or 'full_bfill'"
 
     - name: get rolling bad aggregate
       POST: /v1/aggregates

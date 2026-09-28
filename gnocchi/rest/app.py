@@ -15,13 +15,11 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 import os
-import pkg_resources
 import threading
 import uuid
 
 import daiquiri
 from oslo_middleware import cors
-from oslo_policy import policy
 from paste import deploy
 import pecan
 from pecan import jsonify
@@ -52,8 +50,7 @@ class GnocchiHook(pecan.hooks.PecanHook):
     def __init__(self, conf):
         self.backends = {}
         self.conf = conf
-        self.policy_enforcer = policy.Enforcer(conf)
-        self.policy_enforcer.register_defaults(policies.list_rules())
+        self.policy_enforcer = policies.init(conf)
         self.auth_helper = driver.DriverManager("gnocchi.rest.auth_helper",
                                                 conf.api.auth_mode,
                                                 invoke_on_load=True).driver
@@ -168,17 +165,21 @@ def load_app(conf, not_implemented_middleware=True):
 
     if cfg_path is None or not os.path.exists(cfg_path):
         LOG.debug("No api-paste configuration file found! Using default.")
-        cfg_path = os.path.abspath(pkg_resources.resource_filename(
-            __name__, "api-paste.ini"))
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'api-paste.ini')
 
     config = dict(conf=conf,
                   not_implemented_middleware=not_implemented_middleware)
     configkey = str(uuid.uuid4())
     APPCONFIGS[configkey] = config
 
-    LOG.info("WSGI config used: %s", cfg_path)
+    LOG.debug("WSGI config used: %s", cfg_path)
 
     appname = "gnocchi+" + conf.api.auth_mode
+
+    LOG.debug("Starting application [%s] with configuration [%s].",
+              appname, APPCONFIGS)
+
     app = deploy.loadapp("config:" + cfg_path, name=appname,
                          global_conf={'configkey': configkey})
     return http_proxy_to_wsgi.HTTPProxyToWSGI(
@@ -196,6 +197,9 @@ def _setup_app(root, conf, not_implemented_middleware):
     if not_implemented_middleware:
         app = webob.exc.HTTPExceptionMiddleware(NotImplementedMiddleware(app))
 
+    LOG.info("Application setup for context path [%s] and "
+             "configurations [%s].",
+             root, conf.__dict__ if conf else None)
     return app
 
 

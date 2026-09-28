@@ -14,11 +14,10 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from __future__ import absolute_import
-
 from oslo_config import cfg
-import six
-from six.moves.urllib import parse
+from oslo_utils import netutils
+from oslo_utils import strutils
+from urllib import parse
 
 try:
     import redis
@@ -26,8 +25,6 @@ try:
 except ImportError:
     redis = None
     sentinel = None
-
-from gnocchi import utils
 
 
 SEP_S = ':'
@@ -43,8 +40,12 @@ CLIENT_ARGS = frozenset([
     'ssl',
     'ssl_certfile',
     'ssl_keyfile',
+    'ssl_ca_certs',
     'sentinel',
     'sentinel_fallback',
+    'sentinel_username',
+    'sentinel_password',
+    'sentinel_ssl'
 ])
 """
 """
@@ -57,25 +58,31 @@ CLIENT_LIST_ARGS = frozenset([
 #: Client arguments that are expected to be boolean convertible.
 CLIENT_BOOL_ARGS = frozenset([
     'retry_on_timeout',
+    'socket_keepalive',
     'ssl',
+    'sentinel_ssl'
 ])
 
 #: Client arguments that are expected to be int convertible.
 CLIENT_INT_ARGS = frozenset([
     'db',
-    'health_check_interval',
-    'socket_keepalive',
+])
+
+#: Client arguments that are expected to be float convertible.
+CLIENT_FLOAT_ARGS = frozenset([
     'socket_timeout',
+    'health_check_interval',
 ])
 
 OPTS = [
     cfg.StrOpt('redis_url',
+               secret=True,
                default='redis://localhost:6379/',
                help="""Redis URL
 
   For example::
 
-    redis://[:password]@localhost:6379?db=0
+    redis://[username:password]@localhost:6379?db=0
 
   We proxy some options to the redis client (used to configure the redis client
   internals so that it works as you expect/want it to):  `%s`
@@ -110,6 +117,13 @@ OPTS = [
 ]
 
 
+def _parse_sentinel(sentinel):
+    host, port = netutils.parse_host_port(sentinel)
+    if host is None or port is None:
+        raise ValueError('Malformed sentinel server format')
+    return (host, port)
+
+
 def get_client(conf, scripts=None):
     if redis is None:
         raise RuntimeError("Redis Python module is unavailable")
@@ -125,6 +139,8 @@ def get_client(conf, scripts=None):
         if not parsed_url.path:
             raise ValueError("Expected socket path in parsed urls path")
         kwargs['unix_socket_path'] = parsed_url.path
+    if parsed_url.username:
+        kwargs['username'] = parsed_url.username
     if parsed_url.password:
         kwargs['password'] = parsed_url.password
 
@@ -132,11 +148,13 @@ def get_client(conf, scripts=None):
         if a not in options:
             continue
         if a in CLIENT_BOOL_ARGS:
-            v = utils.strtobool(options[a][-1])
+            v = strutils.bool_from_string(options[a][-1])
         elif a in CLIENT_LIST_ARGS:
             v = options[a]
         elif a in CLIENT_INT_ARGS:
             v = int(options[a][-1])
+        elif a in CLIENT_FLOAT_ARGS:
+            v = float(options[a][-1])
         else:
             v = options[a][-1]
         kwargs[a] = v
@@ -145,27 +163,39 @@ def get_client(conf, scripts=None):
     # sentinel arg.
     if 'sentinel' in kwargs:
         sentinel_hosts = [
-            tuple(fallback.split(':'))
-            for fallback in kwargs.get('sentinel_fallback', [])
+            _parse_sentinel(fallback)
+            for fallback in kwargs.pop('sentinel_fallback', [])
         ]
-        sentinel_hosts.insert(0, (kwargs['host'], kwargs['port']))
+        sentinel_hosts.insert(0, (kwargs.pop('host'), kwargs.pop('port')))
+        sentinel_name = kwargs.pop('sentinel')
+        sentinel_kwargs = {}
+        # NOTE(tkajinam): Copy socket_* options, according to the logic
+        # in redis-py
+        for key in kwargs:
+            if key.startswith('socket_'):
+                sentinel_kwargs[key] = kwargs[key]
+        if kwargs.pop('sentinel_ssl', False):
+            sentinel_kwargs['ssl'] = True
+            for key in ('ssl_certfile', 'ssl_keyfile', 'ssl_cafile'):
+                if key in kwargs:
+                    sentinel_kwargs[key] = kwargs[key]
+        for key in ('username', 'password'):
+            if 'sentinel_' + key in kwargs:
+                sentinel_kwargs[key] = kwargs.pop('sentinel_' + key)
         sentinel_server = sentinel.Sentinel(
             sentinel_hosts,
-            socket_timeout=kwargs.get('socket_timeout'))
-        sentinel_name = kwargs['sentinel']
-        del kwargs['sentinel']
-        if 'sentinel_fallback' in kwargs:
-            del kwargs['sentinel_fallback']
+            sentinel_kwargs=sentinel_kwargs,
+            **kwargs)
         # The client is a redis.StrictRedis using a
         # Sentinel managed connection pool.
-        client = sentinel_server.master_for(sentinel_name, **kwargs)
+        client = sentinel_server.master_for(sentinel_name)
     else:
         client = redis.StrictRedis(**kwargs)
 
     if scripts is not None:
         scripts = {
             name: client.register_script(code)
-            for name, code in six.iteritems(scripts)
+            for name, code in scripts.items()
         }
 
     return client, scripts

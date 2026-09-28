@@ -17,22 +17,22 @@ import datetime
 import uuid
 
 import numpy
-import six
 import ujson
 
 
 def to_primitive(obj):
-    if isinstance(obj, ((six.text_type,)
-                        + six.integer_types
+    if isinstance(obj, ((str,)
+                        + (int,)
                         + (type(None), bool, float))):
         return obj
     if isinstance(obj, uuid.UUID):
-        return six.text_type(obj)
+        return str(obj)
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
+    if isinstance(obj, numpy.bool_):
+        return float(obj)
     if isinstance(obj, numpy.datetime64):
-        # Do not include nanoseconds if null
-        return str(obj).rpartition(".000000000")[0] + "+00:00"
+        return numpy.datetime_as_string(obj, unit='s') + "+00:00"
     if isinstance(obj, numpy.timedelta64):
         return obj / numpy.timedelta64(1, 's')
     if isinstance(obj, datetime.timedelta):
@@ -43,9 +43,6 @@ def to_primitive(obj):
     if isinstance(obj, dict):
         return {to_primitive(k): to_primitive(v)
                 for k, v in obj.items()}
-    if hasattr(obj, 'iteritems'):
-        return to_primitive(dict(obj.iteritems()))
-    # Python 3 does not have iteritems
     if hasattr(obj, 'items'):
         return to_primitive(dict(obj.items()))
     if hasattr(obj, '__iter__'):

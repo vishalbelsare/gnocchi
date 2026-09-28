@@ -1,4 +1,4 @@
-.testrepository
+.stestr
 *.pyc
 .tox
 *.egg-info
@@ -15,3 +15,7 @@ cover
 .coverage
 dist
 upgrade/
+/build
+
+# Ignore the IDE files
+.idea
